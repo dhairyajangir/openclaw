@@ -1,0 +1,170 @@
+diff --git a/packages/ai/src/providers/openai-tool-schema.test.ts b/packages/ai/src/providers/openai-tool-schema.test.ts
+index 0234000..5dce4dc 100644
+--- a/packages/ai/src/providers/openai-tool-schema.test.ts
++++ b/packages/ai/src/providers/openai-tool-schema.test.ts
+@@ -64,6 +64,14 @@ describe("OpenAI strict tool schema normalization", () => {
+     deepStrictEqual(normalizeStrictOpenAIJsonSchema(schema), objectSchema(properties));
+   });
+ 
++  it("rejects an unnormalized anyOf at the root of strict parameters", () => {
++    const schema = {
++      anyOf: [objectSchema({ first: { type: "string" } }), objectSchema({ second: { type: "integer" } })],
++    };
++
++    expect(violations(schema).length).toBeGreaterThan(0);
++  });
++
+   it.each([{ type: "object" }, { type: "object", properties: [] }])(
+     "repairs object properties: %j",
+     (schema) => {
+diff --git a/packages/ai/src/transports/openai-completions-stream.integration.test.ts b/packages/ai/src/transports/openai-completions-stream.integration.test.ts
+index 9823da0..09647c7 100644
+--- a/packages/ai/src/transports/openai-completions-stream.integration.test.ts
++++ b/packages/ai/src/transports/openai-completions-stream.integration.test.ts
+@@ -6,6 +6,7 @@ import {
+   resetDiagnosticRunActivityForTest,
+ } from "../../../../src/logging/diagnostic-run-activity.js";
+ import { createDeferred } from "../../../../test/helpers/promise.js";
++import { configureAiTransportHost, getAiTransportHost } from "../host.js";
+ import { streamOpenAICompletions } from "../providers/openai-completions.js";
+ import { registerBuiltInApiProviders } from "../providers/register-builtins.js";
+ import { createLlmRuntime } from "../stream.js";
+@@ -44,6 +45,138 @@ function collectLocal(baseUrl: string) {
+ 
+ describe("openai completions stream", () => {
+   afterAll(resetDiagnosticRunActivityForTest);
++
++  it.each([
++    {
++      name: "compatible tool alone",
++      union: "anyOf",
++      branches: [],
++      expectedStrict: true,
++      atRoot: false,
++      includeDestination: false,
++    },
++    {
++      name: "supported nested anyOf",
++      union: "anyOf",
++      branches: [{ type: "string" }, { type: "integer" }],
++      expectedStrict: true,
++      atRoot: false,
++      includeDestination: true,
++    },
++    {
++      name: "unsupported nested oneOf",
++      union: "oneOf",
++      branches: [{ type: "string" }, { type: "integer" }],
++      expectedStrict: false,
++      atRoot: false,
++      includeDestination: true,
++    },
++    {
++      name: "unsupported nested allOf",
++      union: "allOf",
++      branches: [{ type: "string" }, { type: "integer" }],
++      expectedStrict: false,
++      atRoot: false,
++      includeDestination: true,
++    },
++    {
++      name: "nested anyOf containing unsupported oneOf",
++      union: "anyOf",
++      branches: [{ type: "string" }, { oneOf: [{ type: "string" }, { type: "integer" }] }],
++      expectedStrict: false,
++      atRoot: false,
++      includeDestination: true,
++    },
++    {
++      name: "root anyOf normalized to an object",
++      union: "anyOf",
++      branches: [
++        { type: "object", properties: { value: { type: "string" } }, required: ["value"] },
++        { type: "object", properties: { value: { type: "string" } }, required: ["value"] },
++      ],
++      expectedStrict: true,
++      atRoot: true,
++      includeDestination: true,
++    },
++  ] as const)(
++    "serializes mixed tools with $name using strict=$expectedStrict",
++    async ({ union, branches, expectedStrict, atRoot, includeDestination }) => {
++      const originalHost = getAiTransportHost();
++      configureAiTransportHost({ ...originalHost, resolveOpenAIStrictToolSetting: () => true });
++      try {
++        const captured: Array<Record<string, unknown>> = [];
++        const routes: string[] = [];
++        await withServer(
++          (req, res, body) => {
++            routes.push(`${req.method} ${req.url}`);
++            captured.push(JSON.parse(body) as Record<string, unknown>);
++            startSse(res);
++            writeSse(res, makeCompletionsChunk({ role: "assistant", content: "done" }));
++            writeSse(res, makeCompletionsChunk({}, "stop"));
++            res.end("data: [DONE]\n\n");
++          },
++          async (baseUrl) => {
++            const model = localModel(baseUrl, { provider: "openai", id: "strict-tool-test" });
++            const nestedUnion = branches;
++            const common = {
++              name: "lookup_order",
++              description: "Find an order",
++              parameters: {
++                type: "object",
++                properties: { order_id: { type: "string" } },
++                required: ["order_id"],
++                additionalProperties: false,
++              },
++            };
++            const destination = {
++              name: "destination",
++              description: "Select a destination",
++              parameters: atRoot
++                ? { [union]: nestedUnion, additionalProperties: false }
++                : {
++                    type: "object",
++                    properties: { value: { [union]: nestedUnion } },
++                    required: ["value"],
++                    additionalProperties: false,
++                  },
++            };
++            const context = {
++              messages: [{ role: "user" as const, content: "test", timestamp: 1 }],
++              tools: includeDestination ? [common, destination] : [common],
++            };
++            const stream = await createOpenAICompletionsTransportStreamFn()(model, context, {
++              apiKey: "synthetic-test-key",
++            });
++            expect((await stream.result()).stopReason).toBe("stop");
++            expect(routes).toEqual(["POST /v1/chat/completions"]);
++            expect(captured).toHaveLength(1);
++            const tools = captured[0]?.tools as
++              | Array<{ function: { name: string; strict?: boolean; parameters: unknown } }>
++              | undefined;
++            const names = includeDestination ? ["destination", "lookup_order"] : ["lookup_order"];
++            expect(tools).toHaveLength(names.length);
++            expect(tools?.map((tool) => tool.function.name).toSorted()).toEqual(names);
++            expect(tools?.map((tool) => tool.function.strict)).toEqual(
++              names.map(() => expectedStrict),
++            );
++            const parameters = tools?.find((tool) => tool.function.name === "destination")
++              ?.function.parameters;
++            if (!includeDestination) {
++              expect(parameters).toBeUndefined();
++            } else if (atRoot) {
++              expect(parameters).toMatchObject({ type: "object" });
++              expect(parameters).not.toHaveProperty("anyOf");
++            } else {
++              expect(parameters).toMatchObject({ properties: { value: { [union]: nestedUnion } } });
++            }
++          },
++        );
++      } finally {
++        configureAiTransportHost(originalHost);
++      }
++    },
++  );
++
+   describe.each([
+     { name: "direct", createStream: streamOpenAICompletions },
+     { name: "managed", createStream: createOpenAICompletionsTransportStreamFn() },
