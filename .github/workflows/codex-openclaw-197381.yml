@@ -1,0 +1,194 @@
+# REVIEW DRAFT ONLY. Sampled b029 baseline; separate publication and event review required.
+name: OpenClaw 197381 baseline focused validation
+on:
+  push:
+    branches:
+      - validation/openclaw-197381-b029-1112cl
+permissions:
+  contents: read
+jobs:
+  baseline:
+    if: ${{ github.event_name == 'push' && github.event.created == true && github.repository == 'dhairyajangir/openclaw' && github.event.repository.fork == true && github.event.repository.private == false && github.ref == 'refs/heads/validation/openclaw-197381-b029-1112cl' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      CI: 'true'
+      EXPECTED_VALIDATION_PARENT: b029a471858e63304a3c6e6e1b6d698fbf2fdc65
+      CANONICAL_SHA: b029a471858e63304a3c6e6e1b6d698fbf2fdc65
+      CANONICAL_TREE: f6949b9736fc7fc38c191cb184cc8af875b7ac57
+      PATCH_SHA256: 56c111653e6aaa9ba26fa9644acceee64049c7a294c48d907f5876ae005af27b
+    steps:
+      - name: Checkout validation commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Verify and preserve synthetic test patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_VALIDATION_PARENT" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$GITHUB_REF" == refs/heads/validation/openclaw-197381-b029-1112cl ]]
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          [[ "$(git show -s --format=%P HEAD)" == "$EXPECTED_VALIDATION_PARENT" ]]
+          [[ "$(git log -1 --format='%ae|%ce')" == 'thinkelite@hotmail.com|thinkelite@hotmail.com' ]]
+          [[ -z "$(git status --porcelain --untracked-files=all)" ]]
+          printf '%s\n' '.github/codex-openclaw-197381.patch' '.github/workflows/codex-openclaw-197381.yml' > "$RUNNER_TEMP/expected-paths.txt"
+          git diff-tree --no-commit-id --name-only -r "$EXPECTED_VALIDATION_PARENT" "$GITHUB_SHA" | LC_ALL=C sort > "$RUNNER_TEMP/actual-paths.txt"
+          diff -u "$RUNNER_TEMP/expected-paths.txt" "$RUNNER_TEMP/actual-paths.txt"
+          [[ -f .github/codex-openclaw-197381.patch && ! -L .github/codex-openclaw-197381.patch ]]
+          [[ -f .github/workflows/codex-openclaw-197381.yml && ! -L .github/workflows/codex-openclaw-197381.yml ]]
+          [[ "$(git ls-tree HEAD .github/codex-openclaw-197381.patch | cut -d ' ' -f1)" == 100644 ]]
+          [[ "$(git ls-tree HEAD .github/workflows/codex-openclaw-197381.yml | cut -d ' ' -f1)" == 100644 ]]
+          printf '%s  %s\n' "$PATCH_SHA256" .github/codex-openclaw-197381.patch | sha256sum -c -
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          w, t = map(lambda p: Path(p).resolve(strict=True), (os.environ['GITHUB_WORKSPACE'], os.environ['RUNNER_TEMP']))
+          assert w != t and w not in t.parents and t not in w.parents
+          PY
+          install -m 0600 .github/codex-openclaw-197381.patch "$RUNNER_TEMP/openclaw-197381.patch"
+          printf '%s  %s\n' "$PATCH_SHA256" "$RUNNER_TEMP/openclaw-197381.patch" | sha256sum -c -
+      - name: Checkout canonical source at workspace root
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: openclaw/openclaw
+          ref: b029a471858e63304a3c6e6e1b6d698fbf2fdc65
+          persist-credentials: false
+          clean: true
+      - name: Verify canonical tree and apply test patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(realpath "$(git rev-parse --show-toplevel)")" == "$(realpath "$GITHUB_WORKSPACE")" ]]
+          [[ "$(realpath "$PWD")" == "$(realpath "$GITHUB_WORKSPACE")" ]]
+          [[ "$(git rev-parse HEAD)" == "$CANONICAL_SHA" ]]
+          [[ "$(git rev-parse 'HEAD^{tree}')" == "$CANONICAL_TREE" ]]
+          [[ -z "$(git status --porcelain --untracked-files=all)" ]]
+          [[ -f "$RUNNER_TEMP/openclaw-197381.patch" && ! -L "$RUNNER_TEMP/openclaw-197381.patch" ]]
+          printf '%s  %s\n' "$PATCH_SHA256" "$RUNNER_TEMP/openclaw-197381.patch" | sha256sum -c -
+          git apply --check "$RUNNER_TEMP/openclaw-197381.patch"
+          git apply "$RUNNER_TEMP/openclaw-197381.patch"
+          git diff --cached --quiet
+          [[ -f packages/ai/src/providers/openai-tool-schema.test.ts && ! -L packages/ai/src/providers/openai-tool-schema.test.ts ]]
+          [[ -f packages/ai/src/transports/openai-completions-stream.integration.test.ts && ! -L packages/ai/src/transports/openai-completions-stream.integration.test.ts ]]
+          [[ "$(git hash-object --no-filters -- packages/ai/src/providers/openai-tool-schema.test.ts)" == 5dce4dc183add9aca9904404af13617953d6ac24 ]]
+          [[ "$(git hash-object --no-filters -- packages/ai/src/transports/openai-completions-stream.integration.test.ts)" == 09647c721bfc34ed38284f18d770848b2ea7b131 ]]
+          [[ -z "$(git diff --summary)" ]]
+          printf '%s\n' packages/ai/src/providers/openai-tool-schema.test.ts packages/ai/src/transports/openai-completions-stream.integration.test.ts > "$RUNNER_TEMP/expected-test-paths.txt"
+          git diff --name-only | LC_ALL=C sort > "$RUNNER_TEMP/actual-test-paths.txt"
+          diff -u "$RUNNER_TEMP/expected-test-paths.txt" "$RUNNER_TEMP/actual-test-paths.txt"
+          echo 'Capacity information only; no install-space minimum has been established.'
+          df -h "$GITHUB_WORKSPACE" "$RUNNER_TEMP"
+          free -h
+          mkdir -m 700 "$RUNNER_TEMP/openclaw-home"
+          echo "HOME=$RUNNER_TEMP/openclaw-home" >> "$GITHUB_ENV"
+          echo "PNPM_HOME=$RUNNER_TEMP/openclaw-pnpm-bin" >> "$GITHUB_ENV"
+          echo "COREPACK_HOME=$RUNNER_TEMP/openclaw-corepack" >> "$GITHUB_ENV"
+          echo "PNPM_CONFIG_STORE_DIR=$RUNNER_TEMP/openclaw-pnpm-store" >> "$GITHUB_ENV"
+      - name: Preflight Git and prepare checksum-pinned Node
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Fail before the repository's setup helper could attempt a Git PPA/apt upgrade.
+          git --no-lazy-fetch --version
+          archive="$RUNNER_TEMP/node-v24.22.1-linux-x64.tar.xz"
+          node_dir="$RUNNER_TEMP/openclaw-node-24.22.1"
+          [[ ! -e "$archive" && ! -e "$node_dir" ]]
+          curl --fail --silent --show-error --connect-timeout 10 --max-time 90 --max-filesize 80000000 \
+            --output "$archive" 'https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-x64.tar.xz'
+          printf '%s  %s\n' '6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6' "$archive" | sha256sum -c -
+          mkdir -m 700 "$node_dir"
+          tar --no-same-owner --no-same-permissions -xJf "$archive" -C "$node_dir" --strip-components=1
+          [[ -f "$node_dir/bin/node" && ! -L "$node_dir/bin/node" && ! -e "$node_dir/bin/git" ]]
+          printf '%s  %s\n' 'e32e2d16081cf644f88392934288086e7662529d0d43277c34f7aad2207cfafb' "$node_dir/bin/node" | sha256sum -c -
+          echo "$node_dir/bin" >> "$GITHUB_PATH"
+      - name: Verify selected Node before project setup
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(realpath "$(command -v node)")" == "$(realpath "$RUNNER_TEMP/openclaw-node-24.22.1/bin/node")" ]]
+          [[ "$(node -p 'process.version')" == v24.22.1 ]]
+      - name: Prepare canonical Node and dependencies
+        uses: ./.github/actions/setup-node-env
+        with:
+          cache-mode: 'off'
+          install-bun: 'true'
+          install-deps: 'true'
+          frozen-lockfile: 'true'
+      - name: Stage canonical test Bun
+        uses: ./.github/actions/setup-test-bun
+        with:
+          cache-mode: 'off'
+      - name: Verify runtime identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(realpath "$(command -v node)")" == "$(realpath "$RUNNER_TEMP/openclaw-node-24.22.1/bin/node")" ]]
+          [[ "$(node -p 'process.version')" == v24.22.1 ]]
+          printf '%s  %s\n' 'e32e2d16081cf644f88392934288086e7662529d0d43277c34f7aad2207cfafb' "$(command -v node)" | sha256sum -c -
+          [[ "$(pnpm --version)" == 12.15.0 ]]
+          [[ -f "$OPENCLAW_BUN_PATH" && ! -L "$OPENCLAW_BUN_PATH" ]]
+          printf '%s  %s\n' '0cef667e2f3fd465b6429904ed074381a679be379ec44fa42b5f460ed118b2b8' "$OPENCLAW_BUN_PATH" | sha256sum -c -
+          [[ "$("$OPENCLAW_BUN_PATH" --revision)" == '1.4.4-canary.1+191755ec1' ]]
+          [[ "$("$OPENCLAW_BUN_PATH" -p 'Bun.revision')" == '191755ec115ece3dd642eba3cb0143cecb5e5d7a' ]]
+          [[ "$(git rev-parse HEAD)" == "$CANONICAL_SHA" ]]
+          [[ "$(git rev-parse 'HEAD^{tree}')" == "$CANONICAL_TREE" ]]
+          git diff --cached --quiet
+          [[ -f packages/ai/src/providers/openai-tool-schema.test.ts && ! -L packages/ai/src/providers/openai-tool-schema.test.ts ]]
+          [[ -f packages/ai/src/transports/openai-completions-stream.integration.test.ts && ! -L packages/ai/src/transports/openai-completions-stream.integration.test.ts ]]
+          [[ "$(git hash-object --no-filters -- packages/ai/src/providers/openai-tool-schema.test.ts)" == 5dce4dc183add9aca9904404af13617953d6ac24 ]]
+          [[ "$(git hash-object --no-filters -- packages/ai/src/transports/openai-completions-stream.integration.test.ts)" == 09647c721bfc34ed38284f18d770848b2ea7b131 ]]
+          [[ -z "$(git diff --summary)" ]]
+          printf '%s\n' packages/ai/src/providers/openai-tool-schema.test.ts packages/ai/src/transports/openai-completions-stream.integration.test.ts > "$RUNNER_TEMP/expected-test-paths.txt"
+          git diff --name-only | LC_ALL=C sort > "$RUNNER_TEMP/actual-test-paths.txt"
+          diff -u "$RUNNER_TEMP/expected-test-paths.txt" "$RUNNER_TEMP/actual-test-paths.txt"
+          git ls-files --others --exclude-standard -z > "$RUNNER_TEMP/untracked-before-tests"
+          [[ ! -s "$RUNNER_TEMP/untracked-before-tests" ]]
+      - name: Run baseline owner and transport tests
+        shell: bash
+        run: |
+          set +e
+          pnpm test packages/ai/src/providers/openai-tool-schema.test.ts -- --maxWorkers=1
+          owner_rc=$?
+          pnpm test packages/ai/src/transports/openai-completions-stream.integration.test.ts -- --maxWorkers=1
+          transport_rc=$?
+          head_actual="$(git rev-parse HEAD)"
+          head_command_rc=$?
+          tree_actual="$(git rev-parse 'HEAD^{tree}')"
+          tree_command_rc=$?
+          [[ "$head_actual" == "$CANONICAL_SHA" ]]
+          head_match_rc=$?
+          [[ "$tree_actual" == "$CANONICAL_TREE" ]]
+          tree_match_rc=$?
+          git diff --cached --quiet
+          staged_rc=$?
+          [[ -f packages/ai/src/providers/openai-tool-schema.test.ts && ! -L packages/ai/src/providers/openai-tool-schema.test.ts ]]
+          provider_file_rc=$?
+          provider_blob="$(git hash-object --no-filters -- packages/ai/src/providers/openai-tool-schema.test.ts)"
+          provider_command_rc=$?
+          [[ "$provider_blob" == 5dce4dc183add9aca9904404af13617953d6ac24 ]]
+          provider_match_rc=$?
+          [[ -f packages/ai/src/transports/openai-completions-stream.integration.test.ts && ! -L packages/ai/src/transports/openai-completions-stream.integration.test.ts ]]
+          transport_file_rc=$?
+          transport_blob="$(git hash-object --no-filters -- packages/ai/src/transports/openai-completions-stream.integration.test.ts)"
+          transport_command_rc=$?
+          [[ "$transport_blob" == 09647c721bfc34ed38284f18d770848b2ea7b131 ]]
+          transport_match_rc=$?
+          mode_summary="$(git diff --summary)"
+          mode_command_rc=$?
+          [[ -z "$mode_summary" ]]
+          mode_match_rc=$?
+          actual_paths="$(git diff --name-only | LC_ALL=C sort)"
+          paths_command_rc=$?
+          [[ "$actual_paths" == $'packages/ai/src/providers/openai-tool-schema.test.ts\npackages/ai/src/transports/openai-completions-stream.integration.test.ts' ]]
+          paths_match_rc=$?
+          git ls-files --others --exclude-standard -z > "$RUNNER_TEMP/untracked-after-tests"
+          untracked_command_rc=$?
+          [[ ! -s "$RUNNER_TEMP/untracked-after-tests" ]]
+          untracked_rc=$?
+          set -e
+          printf 'owner_rc=%s\ntransport_rc=%s\nhead_command_rc=%s\ntree_command_rc=%s\nhead_match_rc=%s\ntree_match_rc=%s\nstaged_rc=%s\nprovider_file_rc=%s\nprovider_command_rc=%s\nprovider_match_rc=%s\ntransport_file_rc=%s\ntransport_command_rc=%s\ntransport_match_rc=%s\nmode_command_rc=%s\nmode_match_rc=%s\npaths_command_rc=%s\npaths_match_rc=%s\nuntracked_command_rc=%s\nuntracked_rc=%s\n' "$owner_rc" "$transport_rc" "$head_command_rc" "$tree_command_rc" "$head_match_rc" "$tree_match_rc" "$staged_rc" "$provider_file_rc" "$provider_command_rc" "$provider_match_rc" "$transport_file_rc" "$transport_command_rc" "$transport_match_rc" "$mode_command_rc" "$mode_match_rc" "$paths_command_rc" "$paths_match_rc" "$untracked_command_rc" "$untracked_rc"
+          if (( owner_rc != 0 || transport_rc != 0 || head_command_rc != 0 || tree_command_rc != 0 || head_match_rc != 0 || tree_match_rc != 0 || staged_rc != 0 || provider_file_rc != 0 || provider_command_rc != 0 || provider_match_rc != 0 || transport_file_rc != 0 || transport_command_rc != 0 || transport_match_rc != 0 || mode_command_rc != 0 || mode_match_rc != 0 || paths_command_rc != 0 || paths_match_rc != 0 || untracked_command_rc != 0 || untracked_rc != 0 )); then exit 1; fi
+          echo '::error::Expected baseline failure not observed; check source, test selection and behavior.'
+          exit 1
